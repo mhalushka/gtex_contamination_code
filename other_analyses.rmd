@@ -1,0 +1,365 @@
+---
+title: "Other Analyses"
+author: "Tim Nieuwenhuis"
+date: "12/19/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#Below was the code used to generate figure 1 D
+
+```{r}
+#Get PRSS1 read counts
+##Load GTEx tissues
+library(birk)
+
+read_dat <- read.table(file = "All_Tissue_Site_Details.combined.reads.gct", header = T, stringsAsFactors = F, sep = "\t", skip = 2)
+
+gtab <- read_dat[,1:2]
+
+#Make colnames same as names in sample data
+colnames(read_dat) <- str_replace_all(colnames(read_dat), "[.]", "-")
+
+ind <- gtab$Description %in% "PRSS1"
+
+PRSS1_dat <- read_dat[ind,,drop=F]
+
+PRSS1_dat <- t(PRSS1_dat)
+#Sample data with dates
+samptab <- read.table("GTEx_v7_Annotations_SampleAttributesDS.txt",
+                      header=TRUE,stringsAsFactors=FALSE,sep="\t",fill=TRUE,
+                      quote="")
+samptab$SMGEBTCHD <- as.Date(samptab$SMGEBTCHD, "%m/%d/%Y")
+
+
+pancreas_samps <- samptab %>% filter(SMTSD == "Pancreas")
+
+ind <- rownames(PRSS1_dat) %in% pancreas_samps$SAMPID
+
+#non_panc_PRSS1
+PRSS1_dat <- as.data.frame(PRSS1_dat[!(ind),,drop = F])
+
+#Seperate panc day and non panc_day samples
+PRSS1_dat <- rownames_to_column(PRSS1_dat, var = "SAMPID")
+colnames(PRSS1_dat)[2] <- "prss1"
+
+join_dat <-left_join(PRSS1_dat, samptab) %>% select(SAMPID, prss1, SMGEBTCHD)
+
+join_dat <- join_dat %>% mutate(panc_day = ifelse(SMGEBTCHD %in% pancreas_samps$SMGEBTCHD, T, F), log_prss1 = log10(prss1 + 1))%>% arrange(desc(log_prss1))
+
+no_panc_day <- filter(join_dat, panc_day == F) %>% rowid_to_column("ID")
+
+with_panc_day <- filter(join_dat, panc_day == T) %>% rowid_to_column("ID")
+
+for (i in 1:nrow(no_panc_day)){
+  ind <- which.closest(no_panc_day$SMGEBTCHD[i], pancreas_samps$SMGEBTCHD)
+  
+  sep <- difftime(no_panc_day$SMGEBTCHD[i], pancreas_samps$SMGEBTCHD[ind])
+  no_panc_day$from_panc[i] <- abs(as.numeric(sep, units ="days"))
+}
+
+color_no_panc_day <- mutate(no_panc_day, color = ifelse(from_panc < 7,yes = from_panc,no = "7+")) %>% arrange(color)
+
+
+with_panc_day_2 <- with_panc_day %>% mutate(from_panc = 0, color = "0")
+test <- full_join(color_no_panc_day, with_panc_day_2) %>% arrange(from_panc)
+
+test_2 <- test %>% mutate(ID = ifelse(color == "0", ID, ID * 4.65769))
+
+
+plot_1 <- ggscatter(test_2, x = "ID", y= "log_prss1", alpha = 1,
+          title = "Ranked Contaminated Samples", ylab = "Log10 PRSS1 Raw Counts",
+          color = "color",
+          #shape = "2",
+          #palette = c("#000000",colfunc(7))
+          palette = c("#000000","#FF0000", "#FF6D00", "#FFDA00","#25A9B6", "#48FF5A", "#09E98C", "#B6FF24"),
+          xlab = "Ranked from highest expression to lowest",
+          size = .5
+          ) +
+  #annotate("text", x = 1500, y = 4, label = "Log10 data: 2 = 100") + 
+  ylim(-1, 6) + xlim(0, 8994) 
+  # scale_color_viridis(discrete = T) +
+  #ggpar(legend.title = "Days from pancreas sequencing")
+  
+ggpar(plot_1, legend.title = "Days from pancreas sequencing") %>%  ggadd(add = c("jitter", "shape"), jitter = 6, shape = 7)
+```
+
+
+#Dataset comparison code
+
+
+The below code was used to compare GTEx to two other datasets. The two datasets chosen: Human Protein Atlas and a RNA Atlas, were chose based on their inclusion of tissue samples in GTEx and either the varying types of PRL expressing tissues within them.
+
+
+Get data 
+```{r}
+
+
+library('BiocManager')
+library('recount')
+library('biomaRt')
+
+#Human protein aatlas
+study_hpa <- "ERP003613"
+
+url_hpa <- download_study(study_hpa)
+
+
+load(file.path(study_hpa, 'rse_gene.Rdata'))
+rse_gene_hpa <- rse_gene
+
+dat_hpa <- assay(rse_gene_hpa)
+
+gene_ens_hpa <- rownames(dat_hpa)
+
+gene_clean_hpa <- gsub("\\..*","",gene_ens_hpa)
+#gene_clean <- gene_clean[!(duplicated(gene_clean))]
+
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
+
+
+#Pull PRL
+panc_genes <- c("PRSS1,PNLIP,PRL")
+
+gene_tabl <- getBM(attributes=c('ensembl_gene_id',
+'hgnc_symbol'), filters =
+'hgnc_symbol', values = panc_genes, mart = ensembl)
+
+rownames(dat_hpa) <- gsub("\\..*","",gene_ens_hpa)
+
+
+filt_dat_hpa <- dat_hpa[(rownames(dat_hpa) %in% gene_tabl$ensembl_gene_id),]
+rownames(filt_dat_hpa) 
+
+filt_dat_old_hpa <- filt_dat_hpa
+
+ens_gene_hpa <- rownames(filt_dat_hpa)[2]
+x = 1 
+for (ens_gene_hpa in rownames(filt_dat_hpa)) {
+  hold <- match(ens_gene_hpa, gene_tabl$ensembl_gene_id)
+  rownames(filt_dat_hpa)[x] <- gene_tabl$hgnc_symbol[hold] 
+  x = x + 1
+}
+
+filt_dat_hpa <- as.data.frame(t(filt_dat_hpa))
+
+prot_at_dat <- as_tibble(read.table("E-MTAB-1733.sdrf.txt",   header=TRUE,stringsAsFactors=FALSE,sep="\t",fill=TRUE,
+                      quote="") 
+                      )
+
+detach("package:biomaRt", unload = T)
+#Human Protein joining
+head(prot_at_dat)
+sum(rownames(filt_dat_hpa) %in% prot_at_dat$Comment.ENA_RUN.)
+filt_dat_prot <- rownames_to_column(filt_dat_hpa, var = "Comment.ENA_RUN.")
+run_n_tiss_hpa <- select_(prot_at_dat, "Comment.ENA_RUN.", "Source.Name")
+
+joined_human_atlas <- left_join(filt_dat_prot, run_n_tiss_hpa)
+
+joined_human_atlas <- distinct(joined_human_atlas)
+
+hpa_filt <- dplyr::select(.data = joined_human_atlas, Comment.ENA_RUN., PRL, Source.Name) %>%
+  filter(str_detect(Source.Name, pattern = "heart|liver|lung|pancreas|prostate|skin|stomach|placenta|uterus")) %>%
+  dplyr::rename(sample = Comment.ENA_RUN., tissue_type = Source.Name) %>%
+  mutate(tissue_type=replace(tissue_type, str_detect(tissue_type, "liver"), "Liver"),
+         tissue_type=replace(tissue_type, str_detect(tissue_type, "heart"), "Heart"),
+         tissue_type=replace(tissue_type, str_detect(tissue_type, "lung"), "Lung"),
+         tissue_type=replace(tissue_type, str_detect(tissue_type, "pancreas"), "Pancreas"),
+         tissue_type=replace(tissue_type, str_detect(tissue_type, "prostate"), "Prostate"),
+         tissue_type=replace(tissue_type, str_detect(tissue_type, "skin"), "Skin"),
+         tissue_type=replace(tissue_type, str_detect(tissue_type, "stomach"), "Stomach"),
+          tissue_type=replace(tissue_type, str_detect(tissue_type, "placenta"), "Placenta"),
+          tissue_type=replace(tissue_type, str_detect(tissue_type, "uterus"), "Uterus"),
+         dataset = "HPA")
+
+#RNA_Atlas
+atlas_dat <- read.csv("RNA_atlas_prl.csv", stringsAsFactors = F)
+colnames(atlas_dat)[1] <- "sample"
+
+atlas_filt <- dplyr::select(.data = atlas_dat, sample, PRL, tissue_type) %>%
+  filter(str_detect(tissue_type, pattern = "Liver|Lung|Pancreas|Prostate|Skin|Stomach|Placenta|Uterus")) %>%
+  mutate(dataset = "RNA_Atlas")
+
+
+
+##Load GTEx tissues
+
+read_dat <- read.table(file = "All_Tissue_Site_Details.combined.reads.gct", header = T, stringsAsFactors = F, sep = "\t", skip = 2)
+
+gtab <- read_dat[,1:2]
+
+#Make colnames same as names in sample data
+colnames(read_dat) <- str_replace_all(colnames(read_dat), "[.]", "-")
+
+
+#Load in sample data
+samp_dat <- read.delim(file="GTEx_v7_Annotations_SampleAttributesDS.txt", fill=T,
+                      stringsAsFactors=FALSE, sep="\t", header=T)
+
+
+
+#Filter all unused tissues and samples
+used_samp_dat <- samp_dat %>% filter(SMTSD %in% tiss_tab$V2)
+
+ind <- used_samp_dat$SAMPID %in% colnames(read_dat)
+stab <- used_samp_dat[ind,]
+
+ind <- colnames(read_dat) %in% stab$SAMPID
+read_dat <- read_dat[,ind]
+
+
+tiss_tab <- read.csv(file = "tissues_merged_clean.csv", header = F, stringsAsFactors = F)
+
+select_tissue <- c("liver",
+                  "pituitary",
+                  "uterus",
+                  "lung",
+                  "pancreas",
+                  "prostate",
+                  "skin_sun_exposed__lower_leg",
+                  "stomach")
+
+select_tab <- tiss_tab[tiss_tab$V1 %in% select_tissue,]
+
+
+genes <- gtab$Description
+
+for (tissue in select_tab$V2) {
+
+  ind <- which(stab$SMTSD%in%c(tissue))
+temp_stab <- stab[ind,]
+  
+ind <- (colnames(read_dat) %in% temp_stab$SAMPID)
+
+temp_dat <- read_dat[,ind]
+
+ind <- (genes %in% "PRL")
+
+temp_dat <- t(temp_dat[ind,, drop = F])
+
+colnames(temp_dat) <- "PRL"
+
+assign(paste0(tolower(tissue),"_dat"), as.data.frame(temp_dat) %>%
+              rownames_to_column(var = "sample") %>%
+              select(sample, PRL) %>%
+              mutate(tissue_type = tissue))
+
+}
+
+skin_dat <- `skin - sun exposed (lower leg)_dat`
+skin_dat$tissue_type <- "Skin"
+
+
+
+
+#Combine gtex
+all_gtex <- rbind(pituitary_dat, uterus_dat, liver_dat, lung_dat, pancreas_dat, prostate_dat, skin_dat, stomach_dat)
+all_gtex$dataset <- "GTEx"
+
+all_dat <- rbind(all_gtex, atlas_filt, hpa_filt)
+
+norm_tiss <- all_dat %>%  filter(str_detect(tissue_type, pattern ="Liver|Lung|Pancreas|Prostate|Skin|Stomach"))
+
+contam_tiss <- all_dat %>%  filter(str_detect(tissue_type, pattern ="Pituitary|Uterus|Placenta"))
+```
+
+
+
+
+
+Making graph 1 comparing PRL non expressing tissues
+```{r}
+norm_tiss_plus1 <- norm_tiss
+norm_tiss_plus1$PRL <- norm_tiss$PRL + 1
+
+ggplot(data = norm_tiss_plus1) + 
+  geom_boxplot(aes(dataset, PRL), width = 0.5, outlier.color = NA) +
+  geom_jitter(aes(dataset, PRL,
+                 color = dataset) ) +
+  scale_y_log10(breaks = c(1, 10, 100, 1000, 10000, 100000, 1000000),
+                labels = c("1", "10", "100", "1,000", "10,000", "100,000", "1,000,000")) +
+  labs(title = "Contamination Across Datasets", x = "Tissues", y = "PRL Read Counts + 1") +
+  facet_grid(~tissue_type) 
+
+ggsave("Contamination_across_datasets.pdf")                   
+
+
+```
+
+Making graph 2 comparing PRL expressing tissues in different datasets
+
+```{r}
+
+contam_tiss_plus1 <- contam_tiss
+contam_tiss_plus1$PRL <- contam_tiss$PRL + 1
+
+ggplot(data = contam_tiss_plus1) + 
+  geom_boxplot(aes(dataset, PRL), width = 0.5, outlier.color = NA) +
+  geom_jitter(aes(dataset, PRL,
+                 color = dataset) ) +
+  scale_y_log10(breaks = c(1, 10, 100, 1000, 10000, 100000, 1000000),
+                labels = c("1", "10", "100", "1,000", "10,000", "100,000", "1,000,000")) +
+  labs(title = "Contamination Across Datasets", x = "Tissues", y = "PRL Read Counts + 1") +
+  facet_grid(~tissue_type) 
+
+ggsave("Contamination_across_datasets_2.pdf")  
+
+```
+
+#Contamination across single cell data
+
+To make these files light the rest of the data from the single cell files has been removed except what is necessary for the graph. All of these datasets are publically available.
+
+```{r pressure}
+#Clean and join data
+#all_dat <- read.csv("read_per_mill_panc.csv", stringsAsFactors = F)
+
+
+
+all_dat <- read.csv("all_endo.csv")[,-1]
+
+all_dat %>% filter(cell_type == "endothelial")
+
+all_dat %>% filter(cell_type == "activated_stellate")
+
+all_dat$study <- "pancreas_study"
+
+
+
+#all_dat <- all_dat %>% select(cell_type)
+
+dat <- read.csv(file = "neck_and_melanoma_INS.csv")
+
+full_dat <- rbind(all_dat, dat)
+
+
+```
+
+Making graph
+```{r}
+
+full_dat_1 <- full_dat
+full_dat_1$INS <- full_dat$INS + 1
+
+full_dat_1$study <- factor(full_dat_1$study, levels = c("pancreas_study", "neck_study", "melanoma_study"))
+
+ggplot(data = full_dat_1) + 
+  geom_boxplot(aes(study, INS), width = 0.5, outlier.color = NA) +
+  geom_jitter(aes(study, INS,
+                 color = study) ) +
+  scale_y_log10(breaks = c(1, 10, 100, 1000, 10000, 100000, 1000000),
+                labels = c("1", "10", "100", "1,000", "10,000", "100,000", "1,000,000")) +
+  labs(title = "Contamination Across Single Cell", x = "Tissues", y = "Log10 INS TPM/100 + 1") +
+  facet_grid(~cell_type) 
+
+```
+
+
+```{r}
+sessionInfo()
+```
+

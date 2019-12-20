@@ -1,0 +1,936 @@
+---
+title: "GTEx Contamination Code Analysis"
+author: "Tim Nieuwenhuis, adapted from Matt McCall"
+date: "12/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load all required packages and used functions
+```{r}
+library(tidyverse)
+library(DESeq2)
+library(lme4)
+library(lmerTest)
+library(ggpubr)
+library(ggsci)
+library(lemon)
+#Name: Look()
+
+#Purpose: To look at the top left corner of the data frame, somewhat like head, but with a colname() limit.
+
+look <- function(dat, row_num = 0, col_num = 0){
+  
+  if(row_num == 0 || row_num > dim(dat)[1]){
+    row_num <- ifelse(dim(dat)[1] < 5, dim(dat)[1], 5)
+  }
+  
+  if(col_num == 0 ||  col_num > dim(dat)[2] ){
+    
+    col_num <- ifelse(dim(dat)[2] < 5, dim(dat)[2], 5)
+    
+  }
+  
+  dat[1:row_num, 1:col_num]
+}
+
+
+#Name: shorter_gtex_names_vect()
+
+#Purpose: To change long Gtex names into the names of the individuals the tissue came from.
+
+shorter_gtex_names_vect <- function(x, col =1 ){
+  col2 <- colnames(x)[col]
+  #If else statement used to determine if the name is long or short, if already short nothing should happen, if long, then it will be appropriately shortened. This code works off the assumption that the gtex IDs are either 4 or 5 characters in length
+  if(nchar(x[1, col]) > 10){
+    
+    #Generating stand in list
+    shortname <- vector()
+    #Used subset to create a vector, drop needed to be true to make the tibble output a vector
+    for (k in subset(x, select =1, drop = T)) {
+      #If else for 5 or 4 length IDs
+      #Using the "-" to determine if the id has 4 or 5 characters
+      if(substr(k, start = 10, stop = 10) == "-"){
+        #4 length
+        m <- substr(k, 1, 9)
+        shortname <- c(shortname, m)
+      } else{
+        #5 length
+        m <- substr(k, 1, 10)
+        
+        shortname <- c(shortname, m)
+        
+      }
+      
+    }
+    
+    
+  } else{
+    #Else just puts the shortnames back in case they are already short, thus making the code safe to run on all text.
+    shortname <- x[col]
+  
+  }
+  return(shortname)
+}
+
+
+```
+
+
+Load data and prepare it for loop
+```{r}
+#Load in tissue table, used to switch between tissue names easy to code with and original tissue names
+#Tissue with >70 samples are removed from this list
+tiss_tab <- read.csv(file = "tissues_merged_clean.csv", header = F, stringsAsFactors = F)
+
+#load in read data
+read_dat <- read.table(file = "All_Tissue_Site_Details.combined.reads.gct", header = T, stringsAsFactors = F, sep = "\t", skip = 2)
+
+#Make seperate gene object
+gtab <- read_dat[,1:2]
+
+
+#Remove genes from read_dat object
+read_dat <- read_dat[,-1:-2]
+
+#Make colnames same as names in sample data
+colnames(read_dat) <- str_replace_all(colnames(read_dat), "[.]", "-")
+
+
+#Load in sample data
+samp_dat <- read.delim(file="GTEx_v7_Annotations_SampleAttributesDS.txt", fill=T,
+                      stringsAsFactors=FALSE, sep="\t", header=T)
+
+
+
+#Filter all unused tissues and samples
+used_samp_dat <- samp_dat %>% filter(SMTSD %in% tiss_tab$V2)
+
+ind <- used_samp_dat$SAMPID %in% colnames(read_dat)
+stab <- used_samp_dat[ind,]
+
+ind <- colnames(read_dat) %in% stab$SAMPID
+read_dat <- read_dat[,ind]
+
+```
+
+
+
+
+This first code section is the heaviest part of the code as varianceStabilizingTransformation() takes a considerable amount of time to run. There is optional code in this chunk that allows you to run the code faster using vst() however that will not properly replicate the results in the paper, it will only get you close to said results. As a result the for loop saves RDA files which should allow you to generate the files you need over time if the code is taking to long to run in one sitting. Just note you need to manually edit what tissue you want to start with from the tiss_tab object.
+
+Other optional code includes giving the objects saved to the rda unique names based on their tissue of origins if you want to load multiple RDAs at the same time to complete you own analysis, however this is not suggested as doing so will make the .rda files unusable for later analysis downstream of this chunk.
+
+```{r}
+####Optional selection of what issue to start witth
+#Input start tiss
+
+start_tiss <- "Adipose - Subcutaneous"
+
+ind <- which(tiss_tab$V2 %in% start_tiss)
+
+tiss_run <- tiss_tab[ind:nrow(tiss_tab),]
+
+
+
+
+i <- ind
+for (tiss in tiss_run$V2) {
+  
+#Code from R script 1  
+  
+ind <- which(stab$SMTSD%in%c(tiss))
+temp_stab <- stab[ind,]
+  
+ind <- (colnames(read_dat) %in% temp_stab$SAMPID)
+
+temp_dat <- read_dat[,ind]
+
+  
+#Script 2
+
+rownames(temp_stab) <- temp_stab$SAMPID
+
+temp_DES <- DESeqDataSetFromMatrix(countData = temp_dat,
+                                            colData = temp_stab,
+                                            design = ~ 1)
+rownames(temp_DES) <- gtab$Name
+
+
+#Used varianceStabilizingTransformation but you can use vst() to speed up analysis
+#varianceStabilizingTransformation is required for replication of previous analyses, but vst is fine it you want to
+#quickly generate data.
+
+#Slow accurate
+
+temp_VSD <- varianceStabilizingTransformation(temp_DES)
+
+#Fast, not accurate
+#temp_VSD <- vst(temp_DES)
+
+
+#Saving the unfiltered, can ebe filtered later
+save(gtab, temp_VSD, file=paste0("data_output/",tiss_tab[i,1], "-vsd-unfiltered.rda"))
+
+
+
+m <- rowMeans(assay(temp_VSD))
+
+
+#I am adding here the code to save the normalized vsts as rdas, the reason for this is
+#if the code is going to slowly to do in one sitting (probably due to varianceStabilizingTransformation)
+#you can slowly generate all of the data you need.
+#That said if you want to uniquely interact with the data, you need to also have the unique renaming code on as well
+
+
+
+###Unique names, these will not be usable in later analyses
+# assign(paste0(tiss_tab[i,1], "_VSD"), temp_VSD)
+# 
+# save(gtabMeanFiltered, get(paste0(tiss_tab[i,1], "_VSD")),
+#      file=paste0(tiss_tab[i,1], "-vsd-ufiltered.rda"))
+# 
+# rm(list = c(paste0(tiss_tab[i,1], "_VSD")))
+
+
+###
+
+  i <- i + 1 
+}
+
+
+
+```
+
+
+Variation analysis code:
+
+The purpose of this code chunk is to generate the clusters seen both in this paper and the referenced McCall et al. paper. This code was adapted from the McCall paper, but changed to fit the purposes of running it on every tissue. The output from this chunk includes highly variable genes in each tissue type in both csv and clustered image format, along with a 0 centered normalized score for cluster of variable genes for each tissue.  
+```{r}
+
+
+library("pheatmap")
+library("RColorBrewer")
+library(SuppDists)
+
+
+for (tiss in tiss_run$V1) {
+  load(paste0("data_output/",tiss,"-vsd-unfiltered.rda"))
+  
+  
+
+
+#Filter out lowly expressed genes
+m <- rowMeans(assay(temp_VSD))
+
+ind <- which(m>5)
+gtabMeanFiltered <- gtab[ind,]
+temp_VSDMeanFiltered <- temp_VSD[ind,]
+
+#Creatin highvar subset
+
+v <- apply(assay(temp_VSDMeanFiltered),1,var)
+ind <- which(v > 4)
+
+#Remove temp marker from later object names
+
+vsdHighVar <- assay(temp_VSDMeanFiltered)[ind,]
+
+rownames(vsdHighVar) <- gtabMeanFiltered$Description[ind]
+colnames(vsdHighVar) <- temp_VSDMeanFiltered$SAMPID
+vsdHighVarCentered <- vsdHighVar - rowMeans(vsdHighVar)
+
+## correlation between high variance genes
+library("pheatmap")
+library("RColorBrewer")
+
+
+#Gcor is correlations between each genes
+gcor <- cor(t(vsdHighVar), method="kendall")
+
+## critical value
+#library(pvrank)
+library(SuppDists)
+ngene <- nrow(vsdHighVar)
+nsamp <- ncol(vsdHighVar)
+#tauCrit_old <- round(-qrank(0.01/((ngene^2)-ngene)/2, nsamp, index="kendall", approx = "gaussian")$Cq, 2)
+tauCrit <- round(qKendall(0.01/((ngene^2)-ngene)/2, nsamp, lower.tail = F), 2)
+
+## cluster based on absolute correlation distance
+dendo <- hclust(d=as.dist(1-abs(gcor)), method = "average")
+
+## clean up heatmap to focus on interesting gene clusters
+clusts <- cutree(dendo, h=1-tauCrit)
+tabclusts <- table(clusts)
+ind <- which(tabclusts >= 6) #arbitrary, want enough genes to be intersting
+clusts[!(clusts %in% names(tabclusts)[ind])] <- 0
+ntmp <- names(clusts)
+clusts <- as.numeric(as.factor(clusts))-1
+names(clusts) <- ntmp
+
+## heatmap
+
+#Naming clusters based on their clust values
+n <- length(table(clusts))
+cnames <- rep("", length(clusts))
+
+#Loop to generate names for clusters
+for (clst in 1:(n)){
+  cnames[clusts==clst] <- LETTERS[clst]
+}
+
+anno = data.frame("cluster"=factor(cnames))
+#code below removes shared name
+dup_test <- duplicated(names(clusts))
+if (sum(dup_test)>0) {
+  dup_names <- names(clusts)[dup_test]
+  dup_names_fix <- paste0(dup_names, "_2")
+  names(clusts)[dup_test] <- dup_names_fix
+  }
+
+rownames(anno) = names(clusts)
+#anno_colors = list("cluster"=c("white", brewer.pal(n-1, "Spectral")))
+anno_colors = list("cluster"=c("white", brewer.pal(n-1, "Spectral")))
+names(anno_colors$cluster) <- c("", LETTERS[1:(n)-1])
+colors <- colorRampPalette( brewer.pal(11, "RdBu")[2:10] )(255)
+brks <- seq(0,2,length=length(colors)+1)
+
+
+
+
+chm <- pheatmap(1-gcor, col=colors, breaks=brks,
+                cluster_rows=dendo, cluster_col=dendo, 
+                legend_breaks=c(2,1.5,1,0.5,0), 
+                legend_labels=c("-1.0","-0.5","0","0.5","1.0"),
+                main="", fontsize=5, fontsize_row=3, fontsize_col=3,
+                
+                annotation_col = anno, annotation_row = anno, 
+                
+                annotation_colors = anno_colors,
+                border_color = NA,
+                filename=paste0("image_output/",tiss,"-between-gene-correlation-high-variance-genes.pdf"), 
+                width=10, height=8)
+
+
+
+##############
+
+## stratify data by inclusion in clusters 
+ind <- which(rownames(vsdHighVar) %in% rownames(gcor)[clusts>0])
+vsdHighVarClust <- vsdHighVar[ind,]
+vsdHighVarCenteredClust <- vsdHighVarCentered[ind,]
+vsdHighVarNoise <- vsdHighVar[-ind,]
+
+gcorClust <- gcor[ind,ind]
+dendoClust <- hclust(d=as.dist(1-abs(gcorClust)), method = "average")
+cnamesClust <- cnames[ind]
+
+## clusters 
+n <- length(table(cnamesClust))
+anno = data.frame("cluster"=factor(cnamesClust))
+
+
+
+#code below removes shared name
+dup_test <- duplicated(rownames(vsdHighVarClust))
+if (sum(dup_test)>0) {
+  dup_names <- rownames(vsdHighVarClust)[dup_test]
+  dup_names_fix <- paste0(dup_names, "_2")
+ rownames(vsdHighVarClust)[dup_test] <- dup_names_fix
+  }
+
+rownames(anno) = rownames(vsdHighVarClust)
+anno_colors = list("cluster"=brewer.pal(n, "Spectral"))
+names(anno_colors$cluster) <- LETTERS[1:n]
+colors <- colorRampPalette( brewer.pal(11, "RdBu")[2:10] )(255)
+brks <- seq(0,2,length=length(colors)+1)
+chm <- pheatmap(1-gcorClust, col=colors, breaks=brks,
+                cluster_rows=dendoClust, cluster_col=dendoClust, 
+                legend_breaks=c(2,1.5,1,0.5,0), 
+                legend_labels=c("-1.0","-0.5","0","0.5","1.0"),
+                main="", fontsize=5, fontsize_row=3, fontsize_col=3,
+                annotation_col = anno, annotation_row = anno, 
+                annotation_colors = anno_colors,
+                border_color = NA,
+                filename=paste0("image_output/",tiss,"-between-gene-correlation-high-variance-genes-clean.pdf"), 
+                width=10, height=8)
+#dev.off()
+
+
+## make matrix to output
+gclusts <- matrix("", nrow=max(table(cnames)), ncol=length(table(cnames)))
+colnames(gclusts) <- c("", levels(anno$cluster))
+for(k in 1:length(table(cnames))){
+  tmp <- colnames(gclusts)[k]
+  gclusts[1:sum(cnames==tmp), k] <- rownames(gcor)[cnames==tmp]
+}
+write.csv(gclusts, file=paste0("data_output/",tiss,"-gene-clusters-high-variance.csv"),
+          quote=FALSE, row.names=FALSE)
+
+
+##Make normalized score
+## compute avg cluster expression for each sample
+
+## switch direction of negatively correlated gene
+#If statement added by Tim for sex based collections
+if ("XIST" %in% vsdHighVarCenteredClust) {
+vsdHighVarCenteredClust["XIST",] <- -vsdHighVarCenteredClust["XIST",]
+}
+
+## extract expression for each cluster, convert to zscores, and summarize profile
+clusterProfiles <- matrix(nrow=ncol(vsdHighVarCenteredClust), ncol=length(unique(cnamesClust)))
+for(k in 1:ncol(clusterProfiles)){
+ind <- which(cnamesClust == LETTERS[k])
+  etmp <- vsdHighVarCenteredClust[ind,]
+  ztmp <- etmp / apply(etmp, 1, mad)
+  clusterProfiles[,k] <- colMeans(ztmp)
+}
+rownames(clusterProfiles) <- colnames(vsdHighVarCenteredClust)
+colnames(clusterProfiles) <- LETTERS[1:ncol(clusterProfiles)]
+
+#save(clusterProfiles, file="test-cluster-profiles.rda")
+write.csv(clusterProfiles, file=paste0("data_output/",tiss,"-cluster-profiles.csv"), quote=FALSE)
+}
+
+```
+
+Cluster summary info:
+
+Below are tools used to determine how many genes clustered together and where they clustered together.
+
+```{r}
+
+#Create the master CSV list
+
+
+fail_list <- NULL
+master_df <- NULL
+i <- 1
+for (tiss in tiss_tab$V1) {
+  file_name <- paste0("data_output/",tiss,"-gene-clusters-high-variance.csv")
+  #Try catch here to read through if file doesn't exist
+  
+  tryCatch({
+  current_df <- read.csv(file_name, stringsAsFactors = F)
+  },
+  error=function(e){fail_list <- c(fail_list, tiss)}
+  )
+  
+  #Below is used to fix the possibility of not having an X header due to output
+  if ( colnames(current_df)[1] != "X") {
+    current_df <- read.csv(file_name, stringsAsFactors = F, col.names = "X", header = F)
+  }
+  
+  master_df[[i]] <- current_df
+  names(master_df)[[i]] <- tiss
+    i <- i + 1
+  #master_df <- list(master_df, current_df)
+  
+}
+
+#######
+
+gene <- "PRSS1"
+
+#We need to count up genes associated with the above gene
+
+#gene %in% cluster, if so, who else is it with
+
+#Build into a df and then table() this new dat.frame
+
+
+####Below is tool
+
+#Make null vector for counting up of different genes
+match_count <- NULL
+
+#First for loop moves through the master_df to interact with each DF
+for (df in master_df){
+  
+  #Second foor loop goes through columns
+  for (new_col in 1:ncol(df)) {
+    
+    #If checks if gene appears in for loop
+    if (gene %in% df[,new_col]) {
+      #If gene in for loop append new finding to vector
+      match_count <- c(match_count, df[,new_col] )
+    }
+   
+    
+  }
+  
+  
+}
+#Turn output intot able to count genes
+tab_out <-  table(match_count) 
+
+#Make data.frame, sort data.frame, remove blanks
+tab_out <- as.data.frame(tab_out) %>% arrange(desc(Freq)) %>% filter(match_count != "")
+
+#Final product
+tab_out
+
+
+######
+
+
+#What clusters are genes in?
+
+genes_2 <- c("PRSS1")
+
+cluster_list <- NULL
+
+i <- 1
+
+for (df in master_df){
+  
+  frame_name <- names(master_df[i])
+  
+  k <- 1
+  #Second foor loop goes through columns
+  for (new_col in 1:ncol(df)) {
+    col_name <- names(master_df[[i]][k])
+    test_vector <- master_df[[i]][[k]]
+    
+    #If checks if gene appears in for loop
+    if (genes_2 %in%test_vector) {
+       cluster_list <- c(cluster_list, paste0(frame_name,".",col_name))
+    }
+      
+      k <- k + 1
+   
+    
+  }
+  
+  i  <- i + 1
+}
+
+
+cluster_list
+
+length(cluster_list) - sum(str_detect(cluster_list, pattern = "X"))
+
+
+####
+
+#How often do two genes show up together?
+
+#Two genes
+genes_2 <- c("PRSS1", "CELA3A")
+
+cluster_list <- NULL
+
+i <- 1
+
+for (df in master_df){
+  
+  frame_name <- names(master_df[i])
+  
+  k <- 1
+  #Second foor loop goes through columns
+  for (new_col in 1:ncol(df)) {
+    col_name <- names(master_df[[i]][k])
+    test_vector <- master_df[[i]][[k]]
+    
+    #If checks if gene appears in for loop
+    if (sum(genes_2%in%test_vector) == 2) {
+      #If gene in for loop append new finding to vector
+      cluster_list <- c(cluster_list, paste0(frame_name,".",col_name))
+    }
+      k <- k + 1
+   
+    
+  }
+  
+  i  <- i + 1
+}
+
+cluster_list
+
+
+```
+
+
+
+For loop running the linear mixed model pancreas analysis
+```{r}
+
+#Customize section
+z_score_genes <- c("PRSS1", "CELA3A", "PNLIP", "CLPS")
+
+t_test_z_score <- NULL
+
+no_test_list <-  tiss_tab$V1[!(startsWith(tiss_tab$V1,"pancreas"))]
+
+
+test_samps <- samp_dat  %>% filter(SMTSD %in% "Pancreas")
+
+
+#Load in tissues to loop through
+
+samp_dat$SMGEBTCHD <- as.Date(samp_dat$SMGEBTCHD, format = "%m/%d/%Y")
+
+
+samp_dat$SMNABTCHD <- as.Date(samp_dat$SMNABTCHD, format = "%m/%d/%Y")
+
+
+
+z_score_table <- NULL
+
+#For loop beings
+
+for (tiss in tiss_tab$V1) {
+
+table_temp <- NULL
+
+
+
+
+#load(paste0("required_data/vsd_mean_filtered/",tiss, "-vsd-mean-filtered.rda"))
+
+load(paste0("data_output/",tiss, "-vsd-unfiltered.rda"))
+
+
+#temp_dat <- assay(get(paste0(tiss,"VSDMeanFiltered")))
+
+temp_dat <- assay(temp_VSD)
+
+#rm(list = paste0(tiss,"VSDMeanFiltered"))
+
+#rm(list = paste0(tiss,"SD"))
+
+#temp_dat <- temp_dat[gtabMeanFiltered$Description %in% z_score_genes,,drop = F]
+
+temp_dat <- temp_dat[gtab$Description %in% z_score_genes,,drop = F]
+
+e_tmp <- temp_dat - rowMeans(temp_dat)
+
+z_tmp <- e_tmp / apply(e_tmp, 1, mad)
+
+tmp_score <- colMeans(z_tmp)
+
+table_temp <- as.data.frame(cbind(table_temp, tmp_score))
+
+#Make test day
+
+current_samps <- samp_dat %>% filter(SAMPID %in% colnames(temp_dat))
+
+
+table_temp <- table_temp %>%rownames_to_column(var="SAMPID") %>% dplyr::mutate(test_seq = current_samps$SMGEBTCHD %in% test_samps$SMGEBTCHD,
+                            test_nuc = current_samps$SMNABTCHD %in% test_samps$SMNABTCHD ,
+                            tissue = tiss, seq_day = current_samps$SMGEBTCHD) 
+
+table_temp$SUBJID <- shorter_gtex_names_vect(table_temp)
+
+#Add subject dat
+
+
+
+z_score_table <- rbind(z_score_table , table_temp)
+
+}
+
+
+
+ggplot(z_score_table, aes(x = test_seq, y =  tmp_score)) +
+  geom_violin(aes(fill=test_seq)) +
+  geom_boxplot(width = .2)+ 
+  #facet_grid(tissue~.) +
+  coord_flip() +
+  facet_rep_grid(tissue~.) +
+  labs(title = "Z-score test contamination", y= "Z-score", x = "test Sequencing Day")
+
+ggsave("image_output/pancreas_genes_normalized_plot.pdf", height = 50, limitsize = F)
+
+
+
+
+#Make better names
+z_score_table <- z_score_table %>% filter_all(all_vars((!is.infinite(.))))
+
+tiss_tab_verb <- tiss_tab
+
+colnames(tiss_tab_verb) <- c("tissue", "tissue_proper")
+
+lm_test_z_score <- 
+  left_join(z_score_table, tiss_tab_verb, by = "tissue") %>% select(-tissue) %>%
+  dplyr::rename(tissue = tissue_proper,
+                z_score = tmp_score,
+                pancreas_sequencing_day = test_seq,
+                pancreas_nucleic_day = test_nuc)
+
+#Make fig 1
+dp <- ggscatter(lm_test_z_score, x = "seq_day", y = "z_score",
+                color = "pancreas_sequencing_day", 
+                #shape = "tiss",
+                xlab = "Date of Sequencing", ylab = "Contamination Z-Score of Sample",
+                alpha = .3
+                )
+dp <- dp + scale_color_nejm() 
+
+joined_plot <- ggpar(dp, title = "Correlation Between Sequencing Date and Contamination", legend.title = c(color = "Sequenced the day of a pancreas", shape = "Tissue")) +
+  geom_hline(yintercept = 0)  
+  
+
+joined_plot
+
+ggsave("image_output/Date_figure_1_all.pdf")
+
+
+
+dp2 <- ggviolin(lm_test_z_score, x = "pancreas_sequencing_day", y = "z_score", fill = "pancreas_sequencing_day",
+                xlab = "Sample sequenced same day as a pancreas", ylab = "Sample Pancreas-Gene Z-score",
+                draw_quantiles = T,
+                add = "boxplot", add.params = list(fill = "white"))
+dp2 <- dp2 + scale_fill_nejm()
+violin_plot <- ggpar(dp2, xlab = "Sample sequenced same day as a pancreas", ylab = "Sample Pancreas-Gene Z-score", legend = "none") 
+
+violin_plot
+
+ggsave("violin_figure_1_all.pdf")
+
+
+
+#N for tissues
+
+tissue_sum <- as.data.frame.matrix(t(table(lm_test_z_score$pancreas_sequencing_day, lm_test_z_score$tissue))) 
+
+colnames(tissue_sum) <- c("False_seq_day", "True_seq_day")
+
+tissue_ratio  <- tissue_sum %>% rownames_to_column(var = "tissue_type") %>% mutate(false_true_ratio = round(False_seq_day/True_seq_day, digits = 2))
+
+write.csv(tissue_ratio, "tissue_seq_on_panc_day.csv", row.names = F)
+
+#filter low false days
+
+great_40_tiss <- tissue_ratio %>% filter(False_seq_day >= 40)
+
+lm_40_z_score <- filter(lm_test_z_score, tissue %in% great_40_tiss$tissue_type)
+
+
+#Linear mixed models
+
+all_lmer <- lmer(formula =  z_score ~ pancreas_sequencing_day + pancreas_nucleic_day  + tissue + (1|SUBJID),
+                 REML = F,
+                 data = lm_40_z_score)
+
+
+summary(all_lmer)$coefficients
+
+summary(all_lmer)
+
+conf_all <- confint(all_lmer)
+
+
+pval <- format.pval(summary(all_lmer)$coefficients[,5], digits = 2, eps = FALSE)
+
+joined_table <- round(cbind(summary(all_lmer)$coefficients, conf_all[-1:-2,]), digits = 3)
+
+joined_table[,5] <- pval
+
+write.csv(joined_table, file = "data_output/lm_mixed_pancreas.csv")
+```
+
+For loop running the linear mixed esophagus analysis
+```{r}
+#Customize section
+z_score_genes <- c("KRT4", "KRT13")
+
+t_test_z_score <- NULL
+
+no_test_list <-  tiss_tab$V1[!(startsWith(tiss_tab$V1,"esophagus_mucosa"))]
+
+
+test_samps <- samp_dat  %>% filter(SMTSD %in% "Esophagus - Mucosa")
+
+
+z_score_table <- NULL
+
+#For loop beings
+
+for (tiss in tiss_tab$V1) {
+
+table_temp <- NULL
+
+
+
+
+#load(paste0("required_data/vsd_mean_filtered/",tiss, "-vsd-mean-filtered.rda"))
+
+load(paste0("data_output/",tiss, "-vsd-unfiltered.rda"))
+
+
+#temp_dat <- assay(get(paste0(tiss,"VSDMeanFiltered")))
+
+temp_dat <- assay(temp_VSD)
+
+#rm(list = paste0(tiss,"VSDMeanFiltered"))
+
+#rm(list = paste0(tiss,"SD"))
+
+#temp_dat <- temp_dat[gtabMeanFiltered$Description %in% z_score_genes,,drop = F]
+
+temp_dat <- temp_dat[gtab$Description %in% z_score_genes,,drop = F]
+
+e_tmp <- temp_dat - rowMeans(temp_dat)
+
+z_tmp <- e_tmp / apply(e_tmp, 1, mad)
+
+tmp_score <- colMeans(z_tmp)
+
+table_temp <- as.data.frame(cbind(table_temp, tmp_score))
+
+#Make test day
+
+current_samps <- samp_dat %>% filter(SAMPID %in% colnames(temp_dat))
+
+
+table_temp <- table_temp %>%rownames_to_column(var="SAMPID") %>% dplyr::mutate(test_seq = current_samps$SMGEBTCHD %in% test_samps$SMGEBTCHD,
+                            test_nuc = current_samps$SMNABTCHD %in% test_samps$SMNABTCHD ,
+                            tissue = tiss, seq_day = current_samps$SMGEBTCHD) 
+
+table_temp$SUBJID <- shorter_gtex_names_vect(table_temp)
+
+#Add subject dat
+
+
+
+z_score_table <- rbind(z_score_table , table_temp)
+
+}
+
+ggplot(z_score_table, aes(x = test_seq, y =  tmp_score)) +
+  geom_violin(aes(fill=test_seq)) +
+  geom_boxplot(width = .2)+ 
+  #facet_grid(tissue~.) +
+  coord_flip() +
+  facet_rep_grid(tissue~.) +
+  labs(title = "Z-score test contamination", y= "Z-score", x = "test Sequencing Day")
+
+ggsave("image_output/esophagus_mucosa_violin.pdf", height = 50, limitsize = F)
+
+#Make better names
+tiss_tab_verb <- tiss_tab
+ 
+colnames(tiss_tab_verb) <- c("tissue", "tissue_proper")
+
+lm_test_z_score <- 
+  left_join(z_score_table, tiss_tab_verb, by = "tissue") %>% select(-tissue) %>%
+  dplyr::rename(tissue = tissue_proper,
+                z_score = tmp_score,
+                esophagus_sequencing_day = test_seq,
+                esophagus_nucleic_day = test_nuc)
+
+#N for tissues
+
+tissue_sum <- as.data.frame.matrix(t(table(lm_test_z_score$esophagus_sequencing_day, lm_test_z_score$tissue))) 
+
+colnames(tissue_sum) <- c("False_seq_day", "True_seq_day")
+
+tissue_ratio  <- tissue_sum %>% rownames_to_column(var = "tissue_type") %>% mutate(false_true_ratio = round(False_seq_day/True_seq_day, digits = 2))
+
+write.csv(tissue_ratio, "data_output/tissue_seq_on_eso_day.csv", row.names = F)
+
+#filter low false days
+
+great_40_tiss <- tissue_ratio %>% filter(False_seq_day >= 40)
+
+lm_40_z_score <- filter(lm_test_z_score, tissue %in% great_40_tiss$tissue_type)
+
+
+
+
+#Linear mixed models
+
+all_lmer <- lmer(formula =  z_score ~ esophagus_sequencing_day + esophagus_nucleic_day + tissue + (1|SUBJID),
+                 REML = F,
+                 data = lm_40_z_score)
+
+
+summary(all_lmer)$coefficients
+
+summary(all_lmer)
+
+anova(all_lmer)
+
+conf_all <- confint(all_lmer)
+
+
+pval <- format.pval(summary(all_lmer)$coefficients[,5], digits = 2, eps = FALSE)
+
+joined_table <- round(cbind(summary(all_lmer)$coefficients, conf_all[-1:-2,]), digits = 3)
+
+joined_table[,5] <- pval
+
+write.csv(joined_table, file = "data_output/lm_mixed_esophagus.csv")
+```
+
+Analysis of TPM values of contaminating genes
+```{r}
+#Load in tpm data
+dat_tpm <- read.table(file = "GTEx_Analysis_2016-01-15_v7_RNASeQCv1.1.8_gene_tpm.gct", header = T, stringsAsFactors = F, sep = "\t")
+
+samp_dat <- read.delim(file="GTEx_v7_Annotations_SampleAttributesDS.txt", fill=T,
+                      stringsAsFactors=FALSE, sep="\t", header=T)
+
+#transform tpm_dat into usable format
+panc_gene_tpm <- dat_tpm %>% filter(Description %in% c("PRSS1", "PNLIP", "CELA3A","CLPS"))
+
+
+
+#Remove all non used tissues
+removed_tissues <- c("Pancreas",
+                     "Cervix - Ectocervix",
+                     "Fallopian Tube",
+                     "Cervix - Endocervix",
+                     "Bladder",
+                     "Kidney - Cortex")
+
+
+panc_samps <- samp_dat  %>% filter(SMTSD %in% removed_tissues)
+
+
+panc_names <- str_replace_all(panc_samps$SAMPID, "-", ".")
+
+
+no_panc <- (panc_gene_tpm[,!(colnames(panc_gene_tpm) %in% panc_names)])
+
+
+no_panc <- t(no_panc[,-1])
+
+colnames(no_panc) <- no_panc[1,]
+ 
+no_panc <- as.data.frame(no_panc[-1,], stringsAsFactors = F)
+
+for (column in 1:ncol(no_panc)) {
+  no_panc[,column] <- as.double(no_panc[,column])
+}
+
+ 
+no_panc <- rownames_to_column(no_panc, "sample")
+
+melt_panc <- melt(no_panc)
+
+melt_panc$log_tpm <- log10(melt_panc$value + 1)
+
+ggplot(melt_panc, aes(log_tpm, color=variable)) + stat_ecdf(geom="line", size = 2, alpha = 0.5)
+ggsave(file = "density_plot_reviewer.pdf")
+
+ggplot(melt_panc, aes(log_tpm, color=variable)) + stat_ecdf(geom="step", size = 2, alpha = 0.5)
+ggsave(file = "density_plot_step.pdf")
+
+sum(no_panc$PRSS1 > 5)/dim(no_panc)[1] * 100
+
+sum(no_panc$PRSS1 >= 10)/dim(no_panc)[1] * 100
+
+sum(no_panc$PRSS1 > 100)/dim(no_panc)[1] * 100
+
+sum(no_panc$PRSS1 > 1000)/dim(no_panc)[1] * 100
+```
+
+```{r}
+sessionInfo()
+```

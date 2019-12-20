@@ -1,0 +1,73 @@
+---
+title: "Tabula Muris Analysis"
+author: "Rohan Verma"
+date: "12/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r cars}
+#Tabula Muris Data
+library(ggplot2);library(Seurat);library(umap);library(dplyr)
+toremove <- c('Prss1', 'Pnlip', 'Cpa1', 'Gp2', 'Gm13011', 'Krt13', 'Pgc', 'Krt4', 
+              'Prl', 'Lipf', 'Clps', 'Ctrb1', 'Fga', 'Hp', 'Ckm', 'Fgg', 'Mybpc1', 'Myh2','Prss2')
+
+####all endoT####
+files <- c('~/Downloads/facs_Brain_Non-Myeloid_seurat_tiss.Robj',
+           '~/Downloads/facs_Liver_seurat_tiss.Robj',
+           '~/Downloads/facs_Lung_seurat_tiss.Robj',
+           '~/Downloads/facs_Fat_seurat_tiss.Robj',
+           '~/Downloads/facs_Heart_seurat_tiss.Robj',
+           '~/Downloads/facs_Kidney_seurat_tiss.Robj',
+           '~/Downloads/facs_Limb_Muscle_seurat_tiss.Robj',
+           '~/Downloads/facs_Trachea_seurat_tiss.Robj',
+           '~/Downloads/facs_Pancreas_seurat_tiss.Robj')
+
+endoT <- list()
+for (i in 1:length(files)){
+  load(files[i])
+  tiss <- UpdateSeuratObject(tiss)
+  endoT[[i]] <- rownames(tiss@meta.data)[(grepl(tiss@meta.data$cell_ontology_class, pattern='endothelial cell'))]
+  endoT[[i]] <- subset(tiss,cells = endoT[[i]])
+  rm(tiss)
+}
+names(endoT) <- c('Brain','Liver','Lung','Fat','Heart','Kidney','Limb','Trachea','Pancreas')
+
+x <- endoT[[1]]
+
+for(i in 2:length(endoT)){
+  x <<- merge(x,endoT[[i]])
+}
+
+rm(endoT);ET <- x;rm(x)
+ET <- NormalizeData(ET, normalization.method = "LogNormalize", scale.factor = 10000)
+ET <- ScaleData(ET, features = rownames(ET))
+ET <- FindVariableFeatures(ET, selection.method = "vst", nfeatures = 2000)
+ET <- RunPCA(ET, features = VariableFeatures(object = ET))
+print(DimHeatmap(ET, dims = 1:6, cells = 500, balanced = TRUE,fast=FALSE) + theme_void()) 
+print(DimHeatmap(ET, dims = 7:12, cells = 500, balanced = TRUE,fast=FALSE) + theme_void())
+print(ElbowPlot(ET))# want to use 6 here
+tothispc <-10#6
+ET <- FindNeighbors(ET, dims = 1:tothispc)
+ET <- FindClusters(ET, resolution = 0.5)
+ET <- RunTSNE(ET, dims = 1:tothispc)
+DimPlot(ET, reduction = "tsne")
+TSNEPlot(ET,group.by='tissue')
+
+
+tothispc <-10#6
+ET <- FindNeighbors(ET, dims = 1:tothispc)
+ET <- FindClusters(ET, resolution = 0.5)
+ET <- RunTSNE(ET, dims = 1:tothispc)
+DimPlot(ET, reduction = "tsne")
+TSNEPlot(ET,group.by='tissue')
+```
+
+```{r}
+sessionInfo()
+```
