@@ -13,8 +13,8 @@ And the TPM density plot
 This code should be easily able to run if the referenced data in the code is downloaded and put in ones directory. This code also required the making of sub directories such as /image_output and /data_output, to prevent the cluttering of the main working directory. 
 
 Required files (all available through GTEx portal): 
-GTEx_Analysis_2016-01-15_v7_RNASeQCv1.1.8_gene_tpm.gct
-All_Tissue_Site_Details.combined.reads.gct
+GTEx_Analysis_2016-01-15_v7_RNASeQCv1.1.8_gene_tpm.gct,
+All_Tissue_Site_Details.combined.reads.gct,
 GTEx_v7_Annotations_SampleAttributesDS.txt
 
 Note running this code can take a very long time due to DESeq2's VarianceStabilizingTransformation, as a result there is optional code to run the analyses with VST(), but note that these will not yield results accurate to those in the paper which used the full VarianceStabilizingTransformation. 
