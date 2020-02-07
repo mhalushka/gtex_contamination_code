@@ -1,6 +1,6 @@
 # gtex_contamination_code
 The code used to generate the analyses used in "Basal Contamination of Sequencing: Lessons from the GTEx Dataset" by Nieuwenhuis et al.
-If there are any questions, concerns, or you require help running this code please contact Tim Nieuwenhuis at tnieuwe1@jhmi.edu
+If there are any questions, concerns, or you require help running this code please contact Tim Nieuwenhuis at tnieuwe1@jhmi.edu or open an issue.
 # Files and their purposes
 
 ### GTEx_file_maker_and_analysis.rmd:
@@ -17,7 +17,7 @@ GTEx_Analysis_2016-01-15_v7_RNASeQCv1.1.8_gene_tpm.gct,
 All_Tissue_Site_Details.combined.reads.gct,
 GTEx_v7_Annotations_SampleAttributesDS.txt
 
-Note running this code can take a very long time due to DESeq2's VarianceStabilizingTransformation, as a result there is optional code to run the analyses with VST(), but note that these will not yield results accurate to those in the paper which used the full VarianceStabilizingTransformation. 
+Note running this code can take a very long time due to DESeq2's VarianceStabilizingTransformation, as a result there is optional code to run the analyses with vst(), but note that these will not yield results accurate to those in the paper which used the full VarianceStabilizingTransformation. 
 
 ### tabula_muris_analysis.rmd
 
