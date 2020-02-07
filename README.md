@@ -27,5 +27,5 @@ This code was written by Rohan X. Verma used to analyze how principal components
 
 This code was written by Stephanie Yang, used to show how GTEx's batch effect removal strategy of PEER factors doesn't completely remove the effects of contamination from the dataset.
 
-### other_analyses
+### other_analyses.rmd
 This is a mix of code written by Tim Nieuwenhuis used to make various figures in the paper. Source data for all of this code can be found through the paper, however some of the data had to go through manipulations not included in this code. Please contact Tim Nieuwenhuis for explanation of the manipulations, data files used, and any other questions regarding this section. 
