@@ -1,0 +1,368 @@
+---
+title: "Peer Factor Analysis of Contamination"
+author: "Stephanie Yang"
+date: "12/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r cars}
+###########################################################
+################# assign days for LUNG ####################
+###########################################################
+
+setwd('/dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination')
+
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(devtools)
+library(analyzeR)
+library(yangR)
+library(data.table)
+
+phenotypes <- fread('/dcs01/arking/arkinglab/resources/GTeX/dbGaP_GTeX_phs000424.v7.p2/files/phs000424.v7.pht002743.v7.p2.sample_info_phenotypes/phs000424.v7.pht002743.v7.p2.c1.GTEx_Sample_Attributes.GRU.txt')
+colnames(phenotypes) <- tolower(colnames(phenotypes))
+
+lung.runs <- subset(phenotypes, smtsd == 'Lung' & analyte_type == 'RNA:Total RNA')
+all.lung.days <- lung.runs$smgebtchd
+
+subjids <- substr(lung.runs$sampid, 6, 10)
+subjids <- gsub('-', '', subjids)
+lung.runs$submitted_subject_id <- paste0('GTEX-', subjids)
+
+# esophagus
+esophageal.runs <- subset(phenotypes, smtsd %in% c('Esophagus - Gastroesophageal Junction', 'Esophagus - Muscularis', 'Esophagus - Mucosa'))
+esophageal.days <- esophageal.runs$smgebtchd
+same.day <- lung.runs$submitted_subject_id[which(lung.runs$smgebtchd %in% esophageal.days)]
+lung.runs$esoph_day <- 'No'
+lung.runs$esoph_day[which(lung.runs$submitted_subject_id %in% same.day)] <- 'Yes'
+
+# pancreas
+panc.runs <- subset(phenotypes, smtsd %in% c('Pancreas'))
+panc.days <- panc.runs$smgebtchd
+same.day <- lung.runs$submitted_subject_id[which(lung.runs$smgebtchd %in% panc.days)]
+lung.runs$panc_day <- 'No'
+lung.runs$panc_day[which(lung.runs$submitted_subject_id %in% same.day)] <- 'Yes'
+
+# stomach
+stomach.runs <- subset(phenotypes, smtsd %in% c('Stomach'))
+stomach.days <- stomach.runs$smgebtchd
+same.day <- lung.runs$submitted_subject_id[which(lung.runs$smgebtchd %in% stomach.days)]
+lung.runs$stomach_day <- 'No'
+lung.runs$stomach_day[which(lung.runs$submitted_subject_id %in% same.day)] <- 'Yes'
+
+# skeletal muscle
+muscle.runs <- subset(phenotypes, smtsd %in% c('Muscle - Skeletal'))
+muscle.days <- muscle.runs$smgebtchd
+same.day <- lung.runs$submitted_subject_id[which(lung.runs$smgebtchd %in% muscle.days)]
+lung.runs$muscle_day <- 'No'
+lung.runs$muscle_day[which(lung.runs$submitted_subject_id %in% same.day)] <- 'Yes'
+
+# pituitary
+pituitary.runs <- subset(phenotypes, smtsd %in% c('Pituitary'))
+pituitary.days <- pituitary.runs$smgebtchd
+same.day <- lung.runs$submitted_subject_id[which(lung.runs$smgebtchd %in% pituitary.days)]
+lung.runs$pituitary_day <- 'No'
+lung.runs$pituitary_day[which(lung.runs$submitted_subject_id %in% same.day)] <- 'Yes'
+
+save(lung.runs, file = '/dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination/R_objects/lung.rundateinfo.rds')
+```
+
+
+```{r}
+# Covariates
+# Top 3 genotyping principal components.
+# A set of covariates identified using the Probabilistic Estimation of Expression Residuals (PEER) method (Stegle et al., PLoS Comp. Biol., 2010 ), calculated for the normalized expression matrices (described below). The number of PEER factors was determined as function of sample size (N): 15 factors for N<150, 30 factors for 150≤ N<250, 45 factors for 250≤ N<350, and 60 factors for N≥350, as a result of optimizing for the number of eGenes discovered.
+# Genotyping platform (Illumina HiSeq 2000 or HiSeq X).
+# Sex.
+# Expression
+# Gene expression values for all samples from a given tissue were normalized using the following procedure:
+
+
+# Genes were selected based on expression thresholds of >0.1 TPM in at least 20% of samples and ≥6 reads in at least 20% of samples.
+# Expression values were normalized between samples using TMM as implemented in edgeR (Robinson & Oshlack, Genome Biology, 2010 ).
+# For each gene, expression values were normalized across samples using an inverse normal transform.
+
+ setwd("/dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination")
+
+library(data.table)
+library(yangR)
+library(analyzeR)
+
+# Get data for TPMs
+# counts <- as.data.frame(fread('/dcs01/arking/arkinglab/resources/GTeX/v7_GTEx_counts/GTEx_Analysis_2016-01-15_v7_RNASeQCv1.1.8_gene_tpm.gct'))
+# gene_key <- counts[,c(1,2)]
+# colnames(gene_key) <- c('gene_id', 'symbol')
+
+# phenotypes <- fread('/dcs01/arking/arkinglab/resources/GTeX/dbGaP_GTeX_phs000424.v7.p2/files/phs000424.v7.pht002743.v7.p2.sample_info_phenotypes/phs000424.v7.pht002743.v7.p2.c1.GTEx_Sample_Attributes.GRU.txt')
+# colnames(phenotypes) <- tolower(colnames(phenotypes))
+
+# lung.only <- subset(phenotypes, smtsd == 'Lung' & smafrze == 'RNASEQ')
+
+# counts <- as.data.frame(counts)
+# lung.counts <- counts[,which(colnames(counts) %in% lung.only$sampid)]
+# lung.counts <- as.data.frame(lung.counts)
+# lung.counts_t <- as.data.frame(t(lung.counts))
+
+# colnames(lung.counts_t) <- counts$Name
+
+# lung.only$submitted_subject_id <- make.subjids(lung.only$sampid)
+
+# save(lung.counts_t, file = '/dcs01/arking/arkinglab/active/projects/GTeX/syang/tpms/R_objects/lung.counts.rds')
+
+# load lung counts
+# load('/dcs01/arking/arkinglab/active/projects/GTeX/syang/tpms/R_objects/lung.counts.rds')
+
+# lung.counts_t$submitted_subject_id <- make.subjids(rownames(lung.counts_t))
+
+# saved <- lung.counts_t
+# saved$submitted_subject_id <- NULL
+# lung.counts <- t(as.data.frame(saved))
+
+# ### make into format for xCell
+# load('/dcs01/arking/arkinglab/active/projects/GTeX/syang/tpms/R_objects/tpms_gene_key.rds')
+# rownames(lung.counts) <- gene_key$gene_id
+
+# # blood.counts$symbol <- gene_key$symbol
+# write.table(lung.counts, sep = '\t', file = '/dcs01/arking/arkinglab/active/projects/GTeX/syang/xCell/lung.counts.txt', quote = F, row.names = gene_key$symbol)
+
+
+#############################################################################################
+# Genes were selected based on expression thresholds of >0.1 TPM in at least 20% of samples #
+#############################################################################################
+
+# counts <- as.data.frame(fread('/dcs01/arking/arkinglab/resources/GTeX/v7_GTEx_counts/GTEx_Analysis_2016-01-15_v7_RNASeQCv1.1.8_gene_tpm.gct'))
+# phenotypes <- fread('/dcs01/arking/arkinglab/resources/GTeX/dbGaP_GTeX_phs000424.v7.p2/files/phs000424.v7.pht002743.v7.p2.sample_info_phenotypes/phs000424.v7.pht002743.v7.p2.c1.GTEx_Sample_Attributes.GRU.txt')
+# colnames(phenotypes) <- tolower(colnames(phenotypes))
+
+# lung.only <- subset(phenotypes, smtsd == 'Lung' & smafrze == 'RNASEQ')
+
+# indiv_count <- as.data.frame(matrix(nrow = 1, ncol = 2))
+# colnames(indiv_count) <- c('Individuals', 'Step')
+# indiv_count[1,] <-  c(nrow(lung.only), 'Started With') # 427 
+# indiv_count$Individuals <- as.numeric(as.character(indiv_count$Individuals))
+# indiv_count$Step <- as.character(indiv_count$Step)
+
+# counts <- as.data.frame(counts)
+# lung.counts <- counts[,which(colnames(counts) %in% lung.only$sampid)]
+# lung.counts <- as.data.frame(lung.counts)
+# lung.counts_t <- as.data.frame(t(lung.counts))
+# colnames(lung.counts_t) <- counts$Name
+
+# save.image('/dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination/lung.contamination.RData')
+load('/dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination/lung.contamination.RData')
+
+no_runs <- lung.counts_t
+no_runs$submitted_subject_id <- NULL
+no_runs <- apply(no_runs, 2, as.numeric)
+rownames(no_runs) <- rownames(lung.counts_t)
+
+print("filtering transcripts")
+
+zeroes <- colSums(no_runs <= 0.1) # greater than 0.1 TPMs
+cutoff <- nrow(no_runs) * 0.8 # 20% of samples
+print(ncol(no_runs))
+if (length(zeroes[which(zeroes > cutoff)]) != 0) {
+	no_runs2 <- no_runs[, -which(zeroes > cutoff)]
+	print(ncol(no_runs2))
+} else {
+	no_runs2 <- no_runs
+	print(ncol(no_runs2))
+} 
+
+#############################
+#### TMM normalization ######
+#############################
+
+library(edgeR)
+
+save.no.runs <- no_runs2
+no_runs3 <- as.data.frame(t(no_runs2))
+
+y <- DGEList(counts=no_runs3)
+
+# this shows you the normalization factors for each sample
+normfactors <- calcNormFactors(y)
+normfactors$sample
+
+# this does the actual calculation!
+tmm.normalized <- cpm(y)
+
+look(tmm.normalized)
+look(no_runs3)
+
+tmm.normalized2 <- as.data.frame(t(tmm.normalized))
+tmm.normalized <- tmm.normalized2
+
+tmm.normalized$submitted_subject_id <- make.subjids(rownames(tmm.normalized))
+rownames(tmm.normalized) <- tmm.normalized$submitted_subject_id
+
+save(tmm.normalized, file = '/dcs01/arking/arkinglab/active/projects/GTeX/syang/tpms/R_objects/tmm.normalized.LUNG.rds')
+```
+
+```{r}
+#############################
+#### Running PEER ###  -> outsourced to /dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination/R_code/run.PEER.R  (this works now!)
+#############################
+ if run interactively, use R 3.5
+ load('/dcs01/arking/arkinglab/active/projects/GTeX/syang/tpms/R_objects/tmm.normalized.LUNG.rds')
+
+ library(peer)
+ tmm.normalized$submitted_subject_id <- NULL
+ model = PEER()
+ PEER_setPhenoMean(model,as.matrix(tmm.normalized))
+ dim(PEER_getPhenoMean(model))
+
+ PEER_setNk(model, 60) # sets the MAX number of unobserved factors to model 
+ PEER_getNk(model)
+ PEER_update(model)
+
+
+ # extract peer means --> 407 x 60 matrix
+ peer.factors <- PEER_getX(model)
+ peer.factors <- as.data.frame(peer.factors)
+ peer.factors.save <- peer.factors
+ colnames(peer.factors) <- paste0('PEER.', 1:35)
+
+ rownames(peer.factors) <- rownames(lung.counts_t)
+
+ subjids <- substr(rownames(peer.factors), 6, 10)
+ subjids <- gsub('-', '', subjids)
+ peer.factors$submitted_subject_id <- paste0('GTEX-', subjids)
+
+ save(peer.factors, file = '/dcs01/arking/arkinglab/active/projects/GTeX/syang/tpms/R_objects/peer.factors.LUNG.interactive.attempt.rds')
+
+```
+
+
+```{r}
+##############################################################
+########## load everything and save image ####################
+##############################################################
+load('/dcs01/arking/arkinglab/active/projects/GTeX/syang/tpms/R_objects/lung.counts.rds')
+load('/dcs01/arking/arkinglab/active/projects/GTeX/syang/tpms/R_objects/tmm.normalized.LUNG.rds')
+load('/dcs01/arking/arkinglab/active/projects/GTeX/syang/tpms/R_objects/peer.factors.LUNG.60.rds')
+load('/dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination/R_objects/lung.rundateinfo.rds')
+# save.image('/dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination/RDatas/check.for.Tim.LUNG.RData')
+
+############################################
+########## Put together ####################
+############################################
+
+lung.runs <- subset(lung.runs, smafrze == 'RNASEQ')
+full.file2 <- merge(peer.factors, lung.runs, by = 'submitted_subject_id')
+full.file.with.counts <- merge(tmm.normalized, full.file2, by = 'submitted_subject_id')
+
+############################################
+########## Plot PEER factors ###############
+############################################
+
+library(ggplot2)
+
+########################################################
+###### code for inverse normal transformation ##########
+########################################################
+
+inv.norm.transform <- function(to.transform){
+to.transform=scale(qnorm((rank(to.transform, na.last="keep")-0.5) / sum(!is.na(to.transform))))
+return(to.transform)
+}
+
+########################################################
+########## Code for checking genes #####################
+########################################################
+
+check.gene <- function(gene.symbol, day.col, bad.tissue){
+	require(ggplot2)
+	require(yangR)
+	require(magrittr)
+	require(gridExtra)
+	to.query <- paste0('^', gene.symbol, '$')
+	ens.id <- gene_key$gene_id[grep(to.query, gene_key$symbol)]
+	value <- grep(ens.id, colnames(full.file.with.counts))
+	if(length(value) == 0){print('gene not found')} else
+	{
+		gene.values <- inv.norm.transform(full.file.with.counts[,value])
+		full.file.with.counts$inv.trans.gene <- gene.values
+
+		# get residuals
+		full.file.with.counts$gene.35 <- scale(resid(lm(inv.trans.gene ~ PEER.1 + PEER.2 + PEER.3 + PEER.4 + PEER.5 + PEER.6 + PEER.7 + PEER.8 + PEER.9 +  PEER.10 + PEER.11 + PEER.12 + PEER.13 + PEER.14 + PEER.15 + PEER.16 + PEER.17 + PEER.18 + PEER.19 + PEER.20 + PEER.21 + PEER.22 + PEER.23 + PEER.24 + PEER.25 + PEER.26 + PEER.27 + PEER.28 + PEER.29 + PEER.30 + PEER.31 + PEER.32 + PEER.33 + PEER.34 + PEER.35, data = full.file.with.counts)))
+		full.file.with.counts$gene.60 <- scale(resid(lm(inv.trans.gene ~ PEER.1 + PEER.2 + PEER.3 + PEER.4 + PEER.5 + PEER.6 + PEER.7 + PEER.8 + PEER.9 +  PEER.10 + PEER.11 + PEER.12 + PEER.13 + PEER.14 + PEER.15 + PEER.16 + PEER.17 + PEER.18 + PEER.19 + PEER.20 + PEER.21 + PEER.22 + PEER.23 + PEER.24 + PEER.25 + PEER.26 + PEER.27 + PEER.28 + PEER.29 + PEER.30 + PEER.31 + PEER.32 + PEER.33 + PEER.34 + PEER.35 + PEER.36 + PEER.37 + PEER.38 + PEER.39 + PEER.40 + PEER.41 + PEER.42 + PEER.43 + PEER.44 + PEER.45 + PEER.46 + PEER.47 + PEER.48 + PEER.49 + PEER.50 + PEER.51 + PEER.52 + PEER.53 + PEER.54 + PEER.55 + PEER.56 + PEER.57 + PEER.58 + PEER.59 + PEER.60, data = full.file.with.counts)))
+
+		# get plots
+		var <- 'inv.trans.gene'
+		var2 <- 'gene.35'
+		var3 <- 'gene.60'
+		plot1 <-  ggplot(full.file.with.counts, aes_string(day.col, var)) + geom_boxplot() + ggtitle(paste0(gene.symbol, ' and ', bad.tissue, ' day')) + ylab(paste0(gene.symbol, ' (TMM, INT)')) + xlab(paste0('Sequenced same day as a ', bad.tissue))+ stat_summary(fun.data = give.n, geom = "text") 
+		plot2 <-  ggplot(full.file.with.counts, aes_string(day.col, var2)) + geom_boxplot() + ggtitle(paste0(gene.symbol, ' and ', bad.tissue, ' day')) + ylab(paste0(gene.symbol, ' (TMM, INT, 35 PEER factors)')) + xlab(paste0('Sequenced same day as a ', bad.tissue))+ stat_summary(fun.data = give.n, geom = "text") 
+		plot3 <-  ggplot(full.file.with.counts, aes_string(day.col, var3)) + geom_boxplot() + ggtitle(paste0(gene.symbol, ' and ', bad.tissue, ' day')) + ylab(paste0(gene.symbol, ' (TMM, INT, 60 PEER factors)')) + xlab(paste0('Sequenced same day as a ', bad.tissue))+ stat_summary(fun.data = give.n, geom = "text") 
+
+		# save plots
+		pdf(paste0('/dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination/images/', gene.symbol, '.in.lung.pdf'), width = 10, height = 4)
+		grid.arrange(plot1, plot2, plot3, ncol = 3)
+		dev.off()
+
+		# get estimates
+		lm(inv.trans.gene ~ get(day.col), data = full.file.with.counts) %>% summary %>% coef %>% as.data.frame -> nocorrect
+		lm(gene.35 ~ get(day.col), data = full.file.with.counts) %>% summary %>% coef %>% as.data.frame -> correct35
+		lm(gene.60 ~ get(day.col), data = full.file.with.counts) %>% summary %>% coef %>% as.data.frame -> correct60
+
+		to.enter <- c(gene.symbol, nocorrect$`Pr(>|t|)`[2], correct35$`Pr(>|t|)`[2], correct60$`Pr(>|t|)`[2],correct60$Estimate[2], bad.tissue)
+		return(to.enter)
+
+		# checking t-test
+		# t.test(inv.trans.gene ~ panc_day, data = full.file.with.counts, var.equal = T)
+		# lm(inv.trans.gene ~ panc_day, data = full.file.with.counts) %>% summary
+	}	
+}
+
+########################################################
+########## Check genes #################################
+########################################################
+
+prss1 <- check.gene('PRSS1', 'panc_day', 'pancreas')
+pnlip <- check.gene('PNLIP', 'panc_day', 'pancreas')
+prl <- check.gene('PRL', 'pituitary_day', 'pituitary gland')
+cela3a <- check.gene('CELA3A', 'panc_day', 'pancreas')
+lipf <- check.gene('LIPF', 'stomach_day', 'stomach')
+krt4 <- check.gene('KRT4', 'esoph_day', 'esophagus')
+krt13 <- check.gene('KRT13', 'esoph_day', 'esophagus')
+
+hold <- data.frame(a=prss1, b=pnlip, c=prl, d=cela3a, f=lipf, g=krt4, h=krt13)
+hold <- as.data.frame(t(hold))
+colnames(hold) <- c('Gene', 'P. value before PEER correction', 'P. value after correcting for 35 PEER factors', 'P. value after correcting for 60 PEER factors', 'Beta estimate after correcting for 60 PEER factors', 'Tissue')
+
+write.csv(hold, quote = F, file = '/dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination/estimates/estimates.csv')
+
+########################################################
+########## Plot PEER factors ###########################
+########################################################
+# get COHORT info.
+library(readr)
+phenotype <- read_delim("/dcs01/arking/arkinglab/active/projects/GTeX/syang/data_files/GTEx_v7_Subject_Phenotypes.GRU.n635_AnalysisFreeze.txt", "\t", escape_double = FALSE, trim_ws = TRUE)
+phenotype$submitted_subject_id <- phenotype$SUBJID
+
+full.file.with.counts3 <- merge(full.file.with.counts, phenotype, by = 'submitted_subject_id') # there are 44 subject-level phenotypes missing here.
+nrow(full.file.with.counts3)
+
+subj.pheno <- as.data.frame(fread('/dcs01/arking/arkinglab/resources/GTeX/dbGaP_GTEx_phs000424.v8.p2/files/GTEx_Analysis_2017-06-05_v8_Annotations_SubjectPhenotypesDS.txt')) # version 8 has full subject-level phenotypes....
+full.file.with.counts2 <- merge(full.file.with.counts, subj.pheno, by.x = 'submitted_subject_id', by.y = "SUBJID")
+nrow(full.file.with.counts2)
+
+one <- ggplot(full.file.with.counts2, aes(PEER.1, PEER.2, col = COHORT)) + geom_point() + ggtitle('PEER factors from Lung')
+
+pdf('/dcs01/arking/arkinglab/active/projects/GTeX/syang/contamination/images/PEER.from.lung.pdf', width = 8, height = 5)
+print(one)
+dev.off()
+
+```
+
+```{r}
+sessionInfo()
+```
