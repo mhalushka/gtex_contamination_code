@@ -1,5 +1,5 @@
 # gtex_contamination_code
-The code used to generate the analyses used in "Basal Contamination of Sequencing: Lessons from the GTEx Dataset" by Nieuwenhuis et al.
+The code used to generate the analyses used in "Consistent RNA Sequencing Contamination in GTEx and Other Datasets" by Nieuwenhuis et al.
 If there are any questions, concerns, or you require help running this code please contact Tim Nieuwenhuis at tnieuwe1@jhmi.edu or open an issue.
 # Files and their purposes
 
